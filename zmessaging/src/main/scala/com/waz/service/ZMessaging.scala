@@ -48,6 +48,7 @@ import com.waz.utils.Locales
 import com.waz.utils.wrappers.AndroidContext
 import com.waz.zms.FetchJob
 import com.waz.znet._
+import com.waz.znet2.OkHttpWebSocketFactory
 import org.threeten.bp.{Clock, Instant}
 
 import scala.concurrent.{Future, Promise}

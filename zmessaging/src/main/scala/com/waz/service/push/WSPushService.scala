@@ -33,10 +33,12 @@ import com.waz.threading.{CancellableFuture, SerialDispatchQueue}
 import com.waz.utils.events._
 import com.waz.utils.wrappers.URI
 import com.waz.utils.{Backoff, ExponentialBackoff}
+import com.waz.znet.{AccessTokenProvider, AsyncClient, WebSocket}
 import com.waz.znet.AuthenticationManager.AccessToken
-import com.waz.znet.HttpRequest2.Method
-import com.waz.znet.WebSocketFactory.SocketEvent
-import com.waz.znet._
+import com.waz.znet2.Http
+import com.waz.znet2.Http.Headers
+import com.waz.znet2.WebSocketFactory.SocketEvent
+import com.waz.znet2.{HttpRequest, WebSocketFactory}
 
 import scala.concurrent.duration._
 import scala.util.Left
@@ -50,7 +52,7 @@ trait WSPushService {
 
 object WSPushServiceImpl {
 
-  type RequestCreator = AccessToken => HttpRequest2
+  type RequestCreator = AccessToken => HttpRequest
 
   def apply(userId: UserId,
             clientId: ClientId,
@@ -66,10 +68,10 @@ object WSPushServiceImpl {
         AsyncClient.UserAgentHeader -> AsyncClient.userAgent()
       )
 
-      HttpRequest2Impl(
-        httpMethod = Method.Get,
+      HttpRequest.withoutBody(
+        httpMethod = Http.Method.Get,
         url = new URL(uri.toString),
-        headers = headers
+        headers = Headers.create(headers)
       )
     }
 

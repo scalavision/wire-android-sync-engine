@@ -17,8 +17,6 @@
  */
 package com.waz.znet
 
-import java.net.URL
-
 import com.koushikdutta.async.http._
 import com.waz.utils.wrappers.{AndroidURI, URI}
 import com.waz.znet.ContentEncoder.{EmptyRequestContent, RequestContent}
@@ -34,32 +32,6 @@ trait HttpRequest {
   def followRedirect: Boolean
   def timeout: FiniteDuration
 }
-
-trait HttpRequest2 {
-  def url: URL
-  def httpMethod: HttpRequest2.Method
-  def headers: Map[String, String]
-  def getBody: RequestContent
-}
-
-object HttpRequest2 {
-
-  sealed trait Method
-  object Method {
-    case object Get extends Method
-    case object Post extends Method
-    case object Put extends Method
-    case object Delete extends Method
-    case object Patch extends Method
-    case object Head extends Method
-  }
-
-}
-
-case class HttpRequest2Impl(url: URL,
-                            httpMethod: HttpRequest2.Method = HttpRequest2.Method.Get,
-                            headers: Map[String, String] = Map.empty,
-                            getBody: RequestContent = EmptyRequestContent) extends HttpRequest2
 
 class HttpRequestImpl(val req: AsyncHttpRequest) extends HttpRequest {
   override val absoluteUri: Option[URI] = Some(new AndroidURI(req.getUri()))

@@ -15,12 +15,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package com.waz.znet
+package com.waz.znet2
 
 import java.net.URL
 
 import com.waz.utils.events.EventContext
-import com.waz.znet.WebSocketFactory.SocketEvent
+import com.waz.znet2
+import com.waz.znet2.WebSocketFactory.SocketEvent
 import io.fabric8.mockwebserver.DefaultMockServer
 import org.scalatest.{BeforeAndAfterEach, Inside, MustMatchers, WordSpec}
 
@@ -34,7 +35,7 @@ class OkHttpWebSocketSpec extends WordSpec with MustMatchers with Inside with Be
 
   private val testPath = "/test"
   private val defaultWaiting = 100
-  private def testWebSocketRequest(url: String): HttpRequest2 = HttpRequest2Impl(new URL(url))
+  private def testWebSocketRequest(url: String): HttpRequest = HttpRequest.withoutBody(new URL(url))
 
   private var mockServer: DefaultMockServer = _
 
@@ -61,7 +62,7 @@ class OkHttpWebSocketSpec extends WordSpec with MustMatchers with Inside with Be
         .done().once()
 
 
-      toBlocking(OkHttpWebSocketFactory.openWebSocket(testWebSocketRequest(mockServer.url(testPath)))) { stream =>
+      toBlocking(znet2.OkHttpWebSocketFactory.openWebSocket(testWebSocketRequest(mockServer.url(testPath)))) { stream =>
         val firstEvent :: secondEvent :: thirdEvent :: fourthEvent :: Nil = stream.takeEvents(4)
 
         firstEvent mustBe an[SocketEvent.Opened]
@@ -82,7 +83,7 @@ class OkHttpWebSocketSpec extends WordSpec with MustMatchers with Inside with Be
         .waitFor(10000).andEmit("")
         .done().once()
 
-      toBlocking(OkHttpWebSocketFactory.openWebSocket(testWebSocketRequest(mockServer.url(testPath)))) { stream =>
+      toBlocking(znet2.OkHttpWebSocketFactory.openWebSocket(testWebSocketRequest(mockServer.url(testPath)))) { stream =>
         val firstEvent = stream.getEvent(0)
         Try { mockServer.shutdown() } //we do not care about this error
       val secondEvent = stream.getEvent(1)

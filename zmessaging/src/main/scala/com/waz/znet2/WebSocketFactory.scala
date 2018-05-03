@@ -15,11 +15,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-package com.waz.znet
+package com.waz.znet2
 
 import com.waz.ZLog.{info, warn}
 import com.waz.utils.events.{EventContext, EventStream}
-import com.waz.znet.WebSocketFactory.SocketEvent
+import com.waz.znet._
+import com.waz.znet2.WebSocketFactory.SocketEvent
 import okio.ByteString
 import org.json.JSONObject
 
@@ -38,18 +39,18 @@ object WebSocketFactory {
 }
 
 trait WebSocketFactory {
-  def openWebSocket(request: HttpRequest2)(implicit evc: EventContext): EventStream[SocketEvent]
+  def openWebSocket(request: HttpRequest)(implicit evc: EventContext): EventStream[SocketEvent]
 }
 
 object OkHttpWebSocketFactory extends WebSocketFactory {
-  import OkHttpConverters._
+  import WebSocketFactory.SocketEvent
   import com.waz.ZLog.ImplicitTag._
-  import com.waz.znet.WebSocketFactory.SocketEvent
+  import com.waz.znet2.OkHttpConverters._
   import okhttp3.{OkHttpClient, WebSocketListener, Headers => OkHeaders, Request => OkRequest, Response => OkResponse, WebSocket => OkWebSocket}
 
   private lazy val okHttpClient = new OkHttpClient()
 
-  override def openWebSocket(request: HttpRequest2)(implicit evc: EventContext): EventStream[SocketEvent] = {
+  override def openWebSocket(request: HttpRequest)(implicit evc: EventContext): EventStream[SocketEvent] = {
     new EventStream[SocketEvent] {
 
       @volatile private var socket: OkWebSocket = _
