@@ -33,11 +33,12 @@ import org.threeten.bp.Instant
 import scala.concurrent.{Future, Promise}
 
 trait Avs {
+  import Avs._
   def registerAccount(callingService: CallingService): Future[WCall]
   def unregisterAccount(wCall: WCall): Future[Unit]
   def onNetworkChanged(wCall: WCall): Future[Unit]
-  def startCall(wCall: WCall, convId: RConvId, isVideoCall: Boolean, isGroup: Boolean, cbrEnabled: Boolean): Future[Int]
-  def answerCall(wCall: WCall, convId: RConvId, cbrEnabled: Boolean): Unit
+  def startCall(wCall: WCall, convId: RConvId, callType: WCallType.Value, convType: WCallConvType.Value, cbrEnabled: Boolean): Future[Int]
+  def answerCall(wCall: WCall, convId: RConvId, callType: WCallType.Value, cbrEnabled: Boolean): Unit
   def onHttpResponse(wCall: WCall, status: Int, reason: String, arg: Pointer): Future[Unit]
   def onConfigRequest(wCall: WCall, error: Int, json: String): Future[Unit]
   def onReceiveMessage(wCall: WCall, msg: String, currTime: Instant, msgTime: Instant, convId: RConvId, userId: UserId, clientId: ClientId): Unit
@@ -131,7 +132,7 @@ class AvsImpl() extends Avs {
       },
       new VideoReceiveStateHandler {
         override def onVideoReceiveStateChanged(userId: String, state: Int, arg: WCall): Unit =
-          cs.onVideoReceiveStateChanged(VideoReceiveState(state))
+          cs.onVideoReceiveStateChanged(userId, VideoReceiveState(state))
       },
       null
     )
@@ -164,10 +165,9 @@ class AvsImpl() extends Avs {
 
   override def onNetworkChanged(wCall: WCall) = withAvs(Calling.wcall_network_changed(wCall))
 
+  override def startCall(wCall: WCall, convId: RConvId, callType: WCallType.Value, convType: WCallConvType.Value, cbrEnabled: Boolean) = withAvsReturning(wcall_start(wCall, convId.str, callType.id, convType.id, cbrEnabled), -1)
 
-  override def startCall(wCall: WCall, convId: RConvId, isVideoCall: Boolean, isGroup: Boolean, cbrEnabled: Boolean) = withAvsReturning(wcall_start(wCall, convId.str, isVideoCall, isGroup, cbrEnabled), -1)
-
-  override def answerCall(wCall: WCall, convId: RConvId, cbrEnabled: Boolean) = withAvs(wcall_answer(wCall: WCall, convId.str, cbrEnabled))
+  override def answerCall(wCall: WCall, convId: RConvId, callType: WCallType.Value, cbrEnabled: Boolean) = withAvs(wcall_answer(wCall: WCall, convId.str, callType.id, cbrEnabled))
 
   override def onHttpResponse(wCall: WCall, status: Int, reason: String, arg: Pointer) = withAvs(wcall_resp(wCall, status, reason, arg))
 
@@ -231,6 +231,14 @@ object Avs {
       case DataChannel       => "data_channel"
       case Rejected          => "rejected"
     }
+  }
+
+  object WCallType extends Enumeration {
+    val Normal, Video, ForcedAudio = Value
+  }
+
+  object WCallConvType extends Enumeration {
+    val OneOnOne, Group, Conference = Value
   }
 
   /**

@@ -57,9 +57,9 @@ object Calling {
 
   @native def wcall_destroy(arg: Pointer): Unit
 
-  @native def wcall_start(inst: Pointer, convid: String, is_video_call: Boolean, is_group: Boolean, audio_cbr: Boolean): Int
+  @native def wcall_start(inst: Pointer, convid: String, call_type: Int, conv_type: Int, audio_cbr: Boolean): Int
 
-  @native def wcall_answer(inst: Pointer, convid: String, audio_cbr: Boolean): Unit
+  @native def wcall_answer(inst: Pointer, convid: String, call_type: Int, audio_cbr: Boolean): Unit
 
   @native def wcall_resp(inst: Pointer, status: Int, reason: String, arg: Pointer): Int
 

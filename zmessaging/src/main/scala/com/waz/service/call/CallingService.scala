@@ -266,10 +266,13 @@ class CallingService(val accountId:       UserId,
     }("onBitRateStateChanged")
   }
 
-  def onVideoReceiveStateChanged(videoReceiveState: VideoReceiveState) = Serialized.apply(self) {
+  def onVideoReceiveStateChanged(userId: String, videoReceiveState: VideoReceiveState) = Serialized.apply(self) {
     CancellableFuture {
       verbose(s"video state changed: $videoReceiveState")
-      updateActiveCall(_.copy(videoReceiveState = videoReceiveState))("onVideoReceiveStateChanged")
+      updateActiveCall { activeCall =>
+        val newState = activeCall.videoReceiveState + (UserId(userId) -> videoReceiveState)
+        activeCall.copy(videoReceiveState = newState)
+      }("onVideoReceiveStateChanged")
     }
   }
 
@@ -303,18 +306,25 @@ class CallingService(val accountId:       UserId,
     for {
       profile <- callProfile.head
       isGroup <- convsService.isGroupConversation(convId)
+      mems <- members.getActiveUsers(conv.id)
       others <-
-      if (isGroup) Future.successful(Set(accountId))
-      else if (conv.team.isEmpty) Future.successful(Set(UserId(conv.id.str)))
-      else members.getByConvs(Set(conv.id)).map(_.map(_.userId).filter(_ != accountId).toSet)
+        if (isGroup) Future.successful(Set(accountId))
+        else if (conv.team.isEmpty) Future.successful(Set(UserId(conv.id.str)))
+        else Future.successful(mems.filter(_ != accountId).toSet)
       vbr <- userPrefs.preference(UserPreferences.VBREnabled).apply()
     } yield {
+      val callType =
+        if (isVideo && mems.size > 4) Avs.WCallType.ForcedAudio
+        else if (isVideo) Avs.WCallType.Video
+        else Avs.WCallType.Normal
+
+      val convType = if (isGroup) Avs.WCallConvType.Group else Avs.WCallConvType.OneOnOne
       profile.activeCall match {
         case Some(call) if call.convId == convId =>
           call.state match {
             case Some(OtherCalling) =>
               verbose(s"Answering call")
-              avs.answerCall(w, conv.remoteId, !vbr)
+              avs.answerCall(w, conv.remoteId, callType, !vbr)
               updateActiveCall(_.updateState(SelfJoining))("startCall/OtherCalling")
             case _ =>
               warn("Tried to join an already joined/connecting call - ignoring")
@@ -325,12 +335,12 @@ class CallingService(val accountId:       UserId,
           profile.availableCalls.get(convId) match {
             case Some(call) =>
               verbose("Joining an ongoing background call")
-              avs.answerCall(w, conv.remoteId, !vbr)
+              avs.answerCall(w, conv.remoteId, callType, !vbr)
               val active = call.updateState(SelfJoining).copy(joinedTime = None, estabTime = None, endReason = None) // reset previous call state if exists
               callProfile.mutate(_.copy(activeId = Some(call.convId), availableCalls = profile.availableCalls + (convId -> active)))
             case None =>
               verbose("No active call, starting new call")
-              avs.startCall(w, conv.remoteId, isVideo, isGroup, !vbr).map {
+              avs.startCall(w, conv.remoteId, callType, convType, !vbr).map {
                 case 0 =>
                   //Assume that when a video call starts, sendingVideo will be true. From here on, we can then listen to state handler
                   val newCall = CallInfo(

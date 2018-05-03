@@ -40,7 +40,7 @@ case class CallInfo(convId:            ConvId,
                     isCbrEnabled:      Boolean                           = false,
                     isVideoCall:       Boolean                           = false,
                     videoSendState:    VideoSendState                    = DONT_SEND,
-                    videoReceiveState: VideoReceiveState                 = Stopped,
+                    videoReceiveState: Map[UserId, VideoReceiveState]    = Map.empty,
                     startTime:         Instant                           = clock.instant(), //the time we start/receive a call - always the time at which the call info object was created
                     joinedTime:        Option[Instant]                   = None, //the time the call was joined, if any
                     estabTime:         Option[Instant]                   = None, //the time that a joined call was established, if any
