@@ -17,9 +17,14 @@
  */
 package com.waz.znet2
 
+import java.io.{File, InputStream}
+
+import com.waz.ZLog.ImplicitTag._
+import com.waz.ZLog._
 import com.waz.znet2.Http.Method._
-import com.waz.znet2.Http.SerializedBody
+import com.waz.znet2.HttpClient.{Progress, ProgressCallback}
 import okhttp3.{Headers => OkHeaders, MediaType => OkMediaType, Request => OkRequest, RequestBody => OkRequestBody, Response => OkResponse, WebSocket => OkWebSocket}
+import okio.{Buffer, BufferedSink, Okio, Source}
 
 import scala.collection.JavaConverters._
 
@@ -40,29 +45,69 @@ object OkHttpConverters {
     OkMediaType.parse(mediatype)
   }
 
-  def convertHttpRequestBody(body: SerializedBody): OkRequestBody = {
-    OkRequestBody.create(convertMediaType(body.mediaType), body.data)
+  private def createRequestBody(body: Http.Body, callback: Option[ProgressCallback], bufferSize: Int): OkRequestBody = {
+    createCustomRequestBody(
+      callback,
+      body.mediaType.map(convertMediaType),
+      bufferSize,
+      body.data,
+      body.dataLength
+    )
   }
 
-  def convertHttpRequest(request: HttpRequest): OkRequest = {
+  def convertHttpRequest(request: HttpRequest[Http.Body], callback: Option[ProgressCallback], bufferSize: Int): OkRequest = {
+    createOkHttpRequest(request, createRequestBody(_, callback, bufferSize))
+  }
+
+  private def createOkHttpRequest(request: HttpRequest[Http.Body], bodyConverter: Http.Body => OkRequestBody): OkRequest = {
     new OkRequest.Builder()
       .url(request.url)
-      .method(convertHttpMethod(request.httpMethod), request.body.map(convertHttpRequestBody).orNull)
+      .method(convertHttpMethod(request.httpMethod), request.body.map(bodyConverter).orNull)
       .headers(OkHeaders.of(request.headers.headers.asJava))
       .build()
   }
 
-  def convertResponseCode(code: Int): Http.ResponseCode = {
-    if (List(200, 201, 204).contains(code)) Http.SuccessResponseCode(code)
-    else Http.FailedResponseCode(code)
-  }
+  def convertResponseCode(code: Int): Http.ResponseCode = Http.ResponseCode(code)
 
-  def convertOkHttpResponse(response: OkResponse): HttpResponse = {
+  def convertOkHttpResponse(response: OkResponse): HttpResponse[Http.Body] = {
     HttpResponse(
       code = convertResponseCode(response.code()),
       headers = Http.Headers.create(response.headers().toMultimap.asScala.mapValues(_.asScala.head).toMap),
-      body = Option(response.body()).map(body => SerializedBody(Option(body.contentType()).map(_.toString).getOrElse(""), body.bytes()))
+      body = Option(response.body()).map(body =>
+        Http.Body(
+          mediaType = Option(body.contentType()).map(_.toString),
+          data = body.byteStream(),
+          dataLength = if (body.contentLength() == -1) None else Some(body.contentLength())
+        )
+      )
     )
+  }
+
+  def createCustomRequestBody(callback: Option[ProgressCallback],
+                              mediaType: Option[OkMediaType],
+                              bufferSize: Int,
+                              data: InputStream,
+                              dataLength: Option[Long]): OkRequestBody = new OkRequestBody() {
+    override val contentType: OkMediaType = mediaType.orNull
+    override val contentLength: Long = dataLength.getOrElse(-1)
+
+    def writeTo(sink: BufferedSink): Unit = {
+      var source: Source = null
+      try {
+        source = Okio.source(data)
+        val buf = new Buffer()
+        var totalRead = 0L
+        var readCount = 0L
+        callback.foreach(c => c(Progress(0, dataLength)))
+        while ({ readCount = source.read(buf, bufferSize); readCount != -1}) {
+          totalRead += readCount
+          sink.write(buf: Source, readCount)
+          callback.foreach(c => c(Progress(totalRead, dataLength)))
+        }
+      } catch {
+        case e: Exception => error("error while writing to sink", e)
+      }
+    }
   }
 
 }

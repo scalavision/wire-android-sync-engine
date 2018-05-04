@@ -39,7 +39,7 @@ object WebSocketFactory {
 }
 
 trait WebSocketFactory {
-  def openWebSocket(request: HttpRequest)(implicit evc: EventContext): EventStream[SocketEvent]
+  def openWebSocket(request: HttpRequest[Http.Body])(implicit evc: EventContext): EventStream[SocketEvent]
 }
 
 object OkHttpWebSocketFactory extends WebSocketFactory {
@@ -50,13 +50,13 @@ object OkHttpWebSocketFactory extends WebSocketFactory {
 
   private lazy val okHttpClient = new OkHttpClient()
 
-  override def openWebSocket(request: HttpRequest)(implicit evc: EventContext): EventStream[SocketEvent] = {
+  override def openWebSocket(request: HttpRequest[Http.Body])(implicit evc: EventContext): EventStream[SocketEvent] = {
     new EventStream[SocketEvent] {
 
       @volatile private var socket: OkWebSocket = _
 
       override protected def onWire(): Unit = {
-        socket = okHttpClient.newWebSocket(convertHttpRequest(request), new WebSocketListener {
+        socket = okHttpClient.newWebSocket(convertHttpRequest(request, None, 2048), new WebSocketListener {
 
           override def onOpen(webSocket: OkWebSocket, response: OkResponse): Unit = {
             info("WebSocket connection has been opened")

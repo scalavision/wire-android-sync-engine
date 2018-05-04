@@ -17,7 +17,11 @@
  */
 package com.waz.znet2
 
+import java.io.InputStream
+import java.net.URL
 import java.util.Locale
+
+import com.waz.utils.wrappers.URI
 
 object Http {
 
@@ -36,26 +40,28 @@ object Http {
     case object Head extends Method
   }
 
-  sealed trait ResponseCode
-  case class SuccessResponseCode(value: Int) extends ResponseCode
-  case class FailedResponseCode(value: Int) extends ResponseCode
+
+  case class ResponseCode(value: Int) extends AnyVal {
+    import ResponseCode._
+    def isSuccessful: Boolean = List(Success, Created, NoResponse).contains(value)
+  }
 
   object ResponseCode {
-    val Success               = SuccessResponseCode(200)
-    val Created               = SuccessResponseCode(201)
-    val NoResponse            = SuccessResponseCode(204)
-    val MovedPermanently      = FailedResponseCode(301)
-    val MovedTemporarily      = FailedResponseCode(302)
-    val SeeOther              = FailedResponseCode(303)
-    val BadRequest            = FailedResponseCode(400)
-    val Unauthorized          = FailedResponseCode(401)
-    val Forbidden             = FailedResponseCode(403)
-    val NotFound              = FailedResponseCode(404)
-    val RateLimiting          = FailedResponseCode(420)
-    val LoginRateLimiting     = FailedResponseCode(429)
-    val Conflict              = FailedResponseCode(409)
-    val PreconditionFailed    = FailedResponseCode(412)
-    val InternalServerError   = FailedResponseCode(500)
+    val Success               = 200
+    val Created               = 201
+    val NoResponse            = 204
+    val MovedPermanently      = 301
+    val MovedTemporarily      = 302
+    val SeeOther              = 303
+    val BadRequest            = 400
+    val Unauthorized          = 401
+    val Forbidden             = 403
+    val NotFound              = 404
+    val RateLimiting          = 420
+    val LoginRateLimiting     = 429
+    val Conflict              = 409
+    val PreconditionFailed    = 412
+    val InternalServerError   = 500
   }
 
   case class Headers(headers: Map[String, String] = Map.empty[String, String]){
@@ -77,6 +83,33 @@ object Http {
     private def toLower(key: String) = key.toLowerCase(Locale.US) //TODO Do we need this?
   }
 
-  case class SerializedBody(mediaType: String, data: Array[Byte])
+  case class Body(mediaType: Option[String], data: InputStream, dataLength: Option[Long] = None)
 
 }
+
+object HttpRequest {
+
+  def create[T](url: URL,
+                queryParameters: List[(String, String)] = List.empty,
+                method: Http.Method = Http.Method.Get,
+                headers: Http.Headers = Http.Headers.empty,
+                body: Option[T] = None): HttpRequest[T] = {
+    //TODO Refactor this conversions
+    val urlWithParameters = new URL(queryParameters.foldLeft(URI.parse(url.toString).buildUpon){ case (builder, (key, value)) =>
+      builder.appendQueryParameter(key, value)
+    }.build.toString)
+    new HttpRequest(urlWithParameters, method, headers, body)
+  }
+
+  def withoutBody(url: URL,
+                  queryParameters: List[(String, String)] = List.empty,
+                  method: Http.Method = Http.Method.Get,
+                  headers: Http.Headers = Http.Headers.empty): HttpRequest[Http.Body] = {
+    create(url, queryParameters, method, headers)
+  }
+
+}
+
+case class HttpRequest[T](url: URL, httpMethod: Http.Method, headers: Http.Headers, body: Option[T])
+
+case class HttpResponse[T](code: Http.ResponseCode, headers: Http.Headers, body: Option[T])

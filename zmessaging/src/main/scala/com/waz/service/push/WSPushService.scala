@@ -52,7 +52,7 @@ trait WSPushService {
 
 object WSPushServiceImpl {
 
-  type RequestCreator = AccessToken => HttpRequest
+  type RequestCreator = AccessToken => HttpRequest[Http.Body]
 
   def apply(userId: UserId,
             clientId: ClientId,
@@ -68,8 +68,8 @@ object WSPushServiceImpl {
         AsyncClient.UserAgentHeader -> AsyncClient.userAgent()
       )
 
-      HttpRequest.withoutBody(
-        httpMethod = Http.Method.Get,
+      HttpRequest.create[Http.Body](
+        method = Http.Method.Get,
         url = new URL(uri.toString),
         headers = Headers.create(headers)
       )

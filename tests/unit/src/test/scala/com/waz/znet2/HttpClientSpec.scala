@@ -17,11 +17,16 @@
  */
 package com.waz.znet2
 
+import java.io.{ByteArrayInputStream, File}
+
 import com.waz.specs.ZSpec
-import com.waz.utils.{JsonDecoder, JsonEncoder}
-import com.waz.znet2.Http.SuccessResponseCode
+import com.waz.utils.{IoUtils, JsonDecoder, JsonEncoder}
+import com.waz.znet2.HttpClient.Progress
 import okhttp3.mockwebserver.{MockResponse, MockWebServer}
+import okio.{Buffer, Okio}
 import org.json.JSONObject
+
+import scala.collection.mutable.ArrayBuffer
 
 class HttpClientSpec extends ZSpec {
 
@@ -56,8 +61,8 @@ class HttpClientSpec extends ZSpec {
 
   feature("Http client") {
 
-    scenario("should execute request and get response successfully when server is responding.") {
-      val testResponseCode = SuccessResponseCode(201)
+    scenario("return http response when server is responding.") {
+      val testResponseCode = Http.ResponseCode(201)
       val testBodyStr = "test body"
 
       mockServer.enqueue(
@@ -69,19 +74,20 @@ class HttpClientSpec extends ZSpec {
       val client = new HttpClientOkHttpImpl()
       val request = HttpRequest.withoutBody(mockServer.url("/test").url())
 
-      var response: HttpResponse = null
+      var response: HttpResponse[Http.Body] = null
 
-      noException shouldBe thrownBy { response = result { client.call(request) } }
+      noException shouldBe thrownBy { response = result { client.call[Http.Body, Http.Body](request) } }
 
       response.code                       shouldBe testResponseCode
       response.body                       shouldBe an[Some[_]]
-      new String(response.body.get.data)  shouldBe testBodyStr
+      val bytes = IoUtils.toByteArray(response.body.get.data)
+      new String(bytes)                   shouldBe testBodyStr
     }
 
   }
 
-  scenario("should execute request and decode response body successfully when server is responding.") {
-    val testResponseCode = SuccessResponseCode(201)
+  scenario("return decoded response body [Foo] when server is responding.") {
+    val testResponseCode = Http.ResponseCode(201)
     val testResponseObject = Foo(1, "ok")
     val testResponseBodyStr = fooEncoder(testResponseObject).toString
 
@@ -94,11 +100,90 @@ class HttpClientSpec extends ZSpec {
     val client = new HttpClientOkHttpImpl()
     val request = HttpRequest.withoutBody(mockServer.url("/test").url())
 
-    val responseObjectFuture = client.decodedResult[Foo](request)
+    val responseObjectFuture = client.decodedResult[Http.Body, Foo](request)
     var responseObject: Foo = null
-    noException shouldBe thrownBy { responseObject = result { responseObjectFuture } }
+    noException shouldBe thrownBy {
+      responseObject = result { responseObjectFuture }
+    }
 
     responseObject shouldBe testResponseObject
   }
+
+  scenario("return decoded response body [File] when server is responding.") {
+    val testResponseCode = Http.ResponseCode(201)
+    val testResponseObject = Foo(1, "ok")
+    val testResponseBodyStr = fooEncoder(testResponseObject).toString
+
+    mockServer.enqueue(
+      new MockResponse()
+        .setResponseCode(testResponseCode.value)
+        .setBody(testResponseBodyStr)
+    )
+
+    val client = new HttpClientOkHttpImpl()
+    val request = HttpRequest.withoutBody(mockServer.url("/test").url())
+
+    val responseObjectFuture = client.decodedResult[Http.Body, File](request)
+    var responseFile: File = null
+    noException shouldBe thrownBy {
+      responseFile = result { responseObjectFuture }
+    }
+
+    responseFile.exists() shouldBe true
+    scala.io.Source.fromFile(responseFile).mkString shouldBe testResponseBodyStr
+  }
+
+  scenario("should execute upload request and call progress callback when server is responding.") {
+    val testResponseCode = Http.ResponseCode(201)
+    val testRequestBody = Array.fill[Byte](100000)(1)
+
+    mockServer.enqueue(new MockResponse().setResponseCode(testResponseCode.value))
+
+    val client = new HttpClientOkHttpImpl()
+    val request = HttpRequest.create(mockServer.url("/test").url(), method = Http.Method.Post, body = Some(testRequestBody))
+
+    val progressAcc = ArrayBuffer.empty[Progress]
+    noException shouldBe thrownBy {
+      await { client.call[Array[Byte], Http.Body](request, uploadCallback = Some(p => progressAcc.append(p))) }
+    }
+
+    checkProgressSequence(
+      progressAcc.toList,
+      contentLength = testRequestBody.length,
+      stepLength = HttpClient.BufferSize
+    )
+  }
+
+  scenario("should execute download request and call progress callback when server is responding.") {
+    val testResponseCode = Http.ResponseCode(200)
+    val testResponseBody = Array.fill[Byte](100000)(1)
+    val buffer = new Buffer()
+    buffer.writeAll(Okio.source(new ByteArrayInputStream(testResponseBody)))
+
+    mockServer.enqueue(new MockResponse().setResponseCode(testResponseCode.value).setBody(buffer))
+
+    val client = new HttpClientOkHttpImpl()
+    val request = HttpRequest.withoutBody(mockServer.url("/test").url())
+
+    val progressAcc = ArrayBuffer.empty[Progress]
+    noException shouldBe thrownBy {
+      await { client.call[Http.Body, File](request, downloadCallback = Some(p => progressAcc.append(p))) }
+    }
+
+    checkProgressSequence(
+      progressAcc.toList,
+      contentLength = testResponseBody.length,
+      stepLength = HttpClient.BufferSize
+    )
+  }
+
+  def checkProgressSequence(list: List[Progress], contentLength: Long, stepLength: Long): Unit =
+    withClue(s"Progress sequence: $list") {
+      list.head.progress shouldBe 0
+      list.last.isCompleted shouldBe true
+      list.size shouldBe Math.ceil(contentLength.toDouble / stepLength).toInt + 1
+      list foreach { p => p.progress should be <= p.total.getOrElse(0L) }
+      list zip list.tail foreach { case (prev, curr) => prev.progress should be < curr.progress }
+    }
 
 }
