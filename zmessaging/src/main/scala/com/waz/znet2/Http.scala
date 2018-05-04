@@ -85,9 +85,15 @@ object Http {
 
   case class Body(mediaType: Option[String], data: InputStream, dataLength: Option[Long] = None)
 
+  sealed trait EmptyBody
+
 }
 
 object HttpRequest {
+
+  def map[A,B](a: HttpRequest[A])(f: A => B): HttpRequest[B] = a.copy(body = a.body.map(f))
+
+  def lift[A,B](f: A => B): HttpRequest[A] => HttpRequest[B] = map(_)(f)
 
   def create[T](url: URL,
                 queryParameters: List[(String, String)] = List.empty,
@@ -104,12 +110,24 @@ object HttpRequest {
   def withoutBody(url: URL,
                   queryParameters: List[(String, String)] = List.empty,
                   method: Http.Method = Http.Method.Get,
-                  headers: Http.Headers = Http.Headers.empty): HttpRequest[Http.Body] = {
+                  headers: Http.Headers = Http.Headers.empty): HttpRequest[Http.EmptyBody] = {
     create(url, queryParameters, method, headers)
   }
 
 }
 
-case class HttpRequest[T](url: URL, httpMethod: Http.Method, headers: Http.Headers, body: Option[T])
+case class HttpRequest[T](url: URL, httpMethod: Http.Method, headers: Http.Headers, body: Option[T]) {
+  def map[B](f: T => B): HttpRequest[B] = HttpRequest.map(this)(f)
+}
 
-case class HttpResponse[T](code: Http.ResponseCode, headers: Http.Headers, body: Option[T])
+object HttpResponse {
+
+  def map[A,B](a: HttpResponse[A])(f: A => B): HttpResponse[B] = a.copy(body = a.body.map(f))
+
+  def lift[A,B](f: A => B): HttpResponse[A] => HttpResponse[B] = map(_)(f)
+
+}
+
+case class HttpResponse[T](code: Http.ResponseCode, headers: Http.Headers, body: Option[T]) {
+  def map[B](f: T => B): HttpResponse[B] = HttpResponse.map(this)(f)
+}

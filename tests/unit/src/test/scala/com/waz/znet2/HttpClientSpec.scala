@@ -20,7 +20,7 @@ package com.waz.znet2
 import java.io.{ByteArrayInputStream, File}
 
 import com.waz.specs.ZSpec
-import com.waz.utils.{IoUtils, JsonDecoder, JsonEncoder}
+import com.waz.utils.{JsonDecoder, JsonEncoder}
 import com.waz.znet2.HttpClient.Progress
 import okhttp3.mockwebserver.{MockResponse, MockWebServer}
 import okio.{Buffer, Okio}
@@ -74,14 +74,13 @@ class HttpClientSpec extends ZSpec {
       val client = new HttpClientOkHttpImpl()
       val request = HttpRequest.withoutBody(mockServer.url("/test").url())
 
-      var response: HttpResponse[Http.Body] = null
+      var response: HttpResponse[Array[Byte]] = null
 
-      noException shouldBe thrownBy { response = result { client.call[Http.Body, Http.Body](request) } }
+      noException shouldBe thrownBy { response = result { client.call[Http.EmptyBody, Array[Byte]](request) } }
 
       response.code                       shouldBe testResponseCode
       response.body                       shouldBe an[Some[_]]
-      val bytes = IoUtils.toByteArray(response.body.get.data)
-      new String(bytes)                   shouldBe testBodyStr
+      new String(response.body.get)       shouldBe testBodyStr
     }
 
   }
@@ -100,7 +99,7 @@ class HttpClientSpec extends ZSpec {
     val client = new HttpClientOkHttpImpl()
     val request = HttpRequest.withoutBody(mockServer.url("/test").url())
 
-    val responseObjectFuture = client.decodedResult[Http.Body, Foo](request)
+    val responseObjectFuture = client.decodedResult[Http.EmptyBody, Foo](request)
     var responseObject: Foo = null
     noException shouldBe thrownBy {
       responseObject = result { responseObjectFuture }
@@ -123,7 +122,7 @@ class HttpClientSpec extends ZSpec {
     val client = new HttpClientOkHttpImpl()
     val request = HttpRequest.withoutBody(mockServer.url("/test").url())
 
-    val responseObjectFuture = client.decodedResult[Http.Body, File](request)
+    val responseObjectFuture = client.decodedResult[Http.EmptyBody, File](request)
     var responseFile: File = null
     noException shouldBe thrownBy {
       responseFile = result { responseObjectFuture }
@@ -144,7 +143,7 @@ class HttpClientSpec extends ZSpec {
 
     val progressAcc = ArrayBuffer.empty[Progress]
     noException shouldBe thrownBy {
-      await { client.call[Array[Byte], Http.Body](request, uploadCallback = Some(p => progressAcc.append(p))) }
+      await { client.call[Array[Byte], Http.EmptyBody](request, uploadCallback = Some(p => progressAcc.append(p))) }
     }
 
     checkProgressSequence(
@@ -167,7 +166,7 @@ class HttpClientSpec extends ZSpec {
 
     val progressAcc = ArrayBuffer.empty[Progress]
     noException shouldBe thrownBy {
-      await { client.call[Http.Body, File](request, downloadCallback = Some(p => progressAcc.append(p))) }
+      await { client.call[Http.EmptyBody, File](request, downloadCallback = Some(p => progressAcc.append(p))) }
     }
 
     checkProgressSequence(

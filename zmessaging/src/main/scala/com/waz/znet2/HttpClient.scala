@@ -50,28 +50,30 @@ object HttpClient {
   case class DeserializingParameters(tmpFileGenerator: () => File)
 
   trait BodySerializer[T] {
-    def serialize(value: T): Http.Body
+    def serialize(value: HttpRequest[T]): HttpRequest[Http.Body]
   }
 
   object BodySerializer {
 
-    def apply[T](f: T => Http.Body): BodySerializer[T] = new BodySerializer[T] {
-      override def serialize(value: T): Http.Body = f(value)
+    import HttpRequest._
+
+    def apply[T](f: HttpRequest[T] => HttpRequest[Http.Body]): BodySerializer[T] = new BodySerializer[T] {
+      override def serialize(value: HttpRequest[T]): HttpRequest[Http.Body] = f(value)
     }
 
     def contramap[A, B](f: A => B)(implicit bs: BodySerializer[B]): BodySerializer[A] =
-      apply(obj => bs.serialize(f(obj)))
+      apply(lift(f) andThen bs.serialize)
 
-    implicit val HttpBodySerializer: BodySerializer[Http.Body] = apply(identity)
+    implicit val EmptyBodySerializer: BodySerializer[Http.EmptyBody] = apply(_.copy(body = None))
 
     implicit val BytesBodySerializer: BodySerializer[Array[Byte]] =
-      apply(bytes => Http.Body(Some(Http.MediaType.Bytes), new ByteArrayInputStream(bytes), Some(bytes.length)))
+      apply(lift(bytes => Http.Body(Some(Http.MediaType.Bytes), new ByteArrayInputStream(bytes), Some(bytes.length))))
 
     implicit val JsonBodySerializer: BodySerializer[JSONObject] =
-      apply(json => BytesBodySerializer.serialize(json.toString.getBytes("utf8")))
+      apply(request => BytesBodySerializer.serialize(request.map(_.toString.getBytes("utf8"))))
 
     implicit val FileBodySerializer: BodySerializer[File] =
-      apply(file => Http.Body(None, new FileInputStream(file), Some(file.length())))
+      apply(lift(file => Http.Body(None, new FileInputStream(file), Some(file.length()))))
 
     implicit def objectToJsonBodySerializer[T](implicit e: JsonEncoder[T]): BodySerializer[T] =
       contramap(e.apply)
@@ -79,45 +81,50 @@ object HttpClient {
   }
 
   trait BodyDeserializer[T] {
-    def deserialize(body: Http.Body, callback: Option[ProgressCallback], parameters: DeserializingParameters): T
+    def deserialize(response: HttpResponse[Http.Body], callback: Option[ProgressCallback], parameters: DeserializingParameters): HttpResponse[T]
   }
 
   object BodyDeserializer {
 
-    def apply[T](f: (Http.Body, Option[ProgressCallback], DeserializingParameters) => T): BodyDeserializer[T] =
+    import HttpResponse._
+
+    def apply[T](f: (HttpResponse[Http.Body], Option[ProgressCallback], DeserializingParameters) => HttpResponse[T]): BodyDeserializer[T] =
       new BodyDeserializer[T] {
-        override def deserialize(body: Http.Body, callback: Option[ProgressCallback], parameters: DeserializingParameters): T =
-          f(body, callback, parameters)
+        override def deserialize(response: HttpResponse[Http.Body], callback: Option[ProgressCallback], parameters: DeserializingParameters): HttpResponse[T] =
+          f(response, callback, parameters)
       }
 
     //TODO Not contramap, find proper name
     def contramap[A, B](f: B => A)(implicit bd: BodyDeserializer[B]): BodyDeserializer[A] =
-      apply((body, callback, params) => f(bd.deserialize(body, callback, params)))
+      apply((response, callback, params) => bd.deserialize(response, callback, params).map(f))
 
-    implicit val HttpBodyDeserializer: BodyDeserializer[Http.Body] = apply((body, _, _) => body)
+    implicit val HttpEmptyBodyDeserializer: BodyDeserializer[Http.EmptyBody] =
+      apply((response, _, _) => response.copy(body = None))
 
     implicit val BytesBodyDeserializer: BodyDeserializer[Array[Byte]] =
-      apply((body, callback, _) => IoUtils.toByteArray(body.data))
+      apply((response, callback, _) => map(response)(body => IoUtils.toByteArray(body.data)))
 
-    implicit val FileBodyDeserializer: BodyDeserializer[File] = BodyDeserializer { (body, callback, params) =>
-      val file = params.tmpFileGenerator()
-      IoUtils.withResource(new FileOutputStream(file)) { out =>
-        val buf                 = Array.fill[Byte](2048)(0)
-        var totalRead           = 0L
-        var readCount           = 0
-        callback.foreach(c => c(Progress(0, body.dataLength)))
-        while ({ readCount = body.data.read(buf); readCount != -1 }) {
-          totalRead += readCount
-          out.write(buf, 0, readCount)
-          callback.foreach(c => c(Progress(totalRead, body.dataLength)))
+    implicit val FileBodyDeserializer: BodyDeserializer[File] = BodyDeserializer { (response, callback, params) =>
+      map(response) { body =>
+        val file = params.tmpFileGenerator()
+        IoUtils.withResource(new FileOutputStream(file)) { out =>
+          val buf                 = Array.fill[Byte](2048)(0)
+          var totalRead           = 0L
+          var readCount           = 0
+          callback.foreach(c => c(Progress(0, body.dataLength)))
+          while ({ readCount = body.data.read(buf); readCount != -1 }) {
+            totalRead += readCount
+            out.write(buf, 0, readCount)
+            callback.foreach(c => c(Progress(totalRead, body.dataLength)))
+          }
         }
-      }
 
-      file
+        file
+      }
     }
 
     implicit val JsonBodyDeserializer: BodyDeserializer[JSONObject] =
-      apply((body, _, _) => new JSONObject(new String(IoUtils.toByteArray(body.data))))
+      apply((response, _, _) => map(response)(body => new JSONObject(new String(IoUtils.toByteArray(body.data)))) )
 
     implicit def objectToJsonBodyDeserializer[T](implicit d: JsonDecoder[T]): BodyDeserializer[T] =
       contramap((json: JSONObject) => d(json))
@@ -159,32 +166,31 @@ class HttpClientOkHttpImpl() extends HttpClient {
       uploadCallback: Option[ProgressCallback] = None,
       downloadCallback: Option[ProgressCallback] = None
   )(implicit bs: BodySerializer[T], bd: BodyDeserializer[R]): CancellableFuture[HttpResponse[R]] =
-    CancellableFuture {
-      request.copy(body = request.body.map(bs.serialize))
-    } recoverWith {
-      case err: Throwable => CancellableFuture.failed(EncodingError(err))
-    } flatMap { serializedRequest =>
-      val promise = Promise[HttpResponse[Http.Body]]
-      new CancellableFuture(promise) {
-        private val okCall = client.newCall(convertHttpRequest(serializedRequest, uploadCallback, BufferSize))
-        okCall.enqueue(new Callback {
-          override def onResponse(call: Call, response: okhttp3.Response): Unit =
-            promise.trySuccess(convertOkHttpResponse(response))
-          override def onFailure(call: Call, e: IOException): Unit =
-            promise.tryFailure(ConnectionError(e))
-        })
+    CancellableFuture(bs.serialize(request))
+      .recoverWith { case err: Throwable => CancellableFuture.failed(EncodingError(err)) }
+      .flatMap { serializedRequest =>
+        val promise = Promise[HttpResponse[Http.Body]]
+        new CancellableFuture(promise) {
+          private val okCall = client.newCall(convertHttpRequest(serializedRequest, uploadCallback, BufferSize))
+          okCall.enqueue(new Callback {
+            override def onResponse(call: Call, response: okhttp3.Response): Unit =
+              promise.trySuccess(convertOkHttpResponse(response))
+            override def onFailure(call: Call, e: IOException): Unit =
+              promise.tryFailure(ConnectionError(e))
+          })
 
-        override def cancel()(implicit tag: LogTag): Boolean = {
-          okCall.cancel()
-          super.cancel()(tag)
+          override def cancel()(implicit tag: LogTag): Boolean = {
+            okCall.cancel()
+            super.cancel()(tag)
+          }
         }
       }
-    } flatMap { response =>
-      Try(response.body.map(bd.deserialize(_, downloadCallback, deserializingParameters))) match {
-        case Success(body) => CancellableFuture.successful(response.copy(body = body))
-        case Failure(err)  => CancellableFuture.failed(DecodingError(err))
+      .flatMap { response =>
+        Try(bd.deserialize(response, downloadCallback, deserializingParameters)) match {
+          case Success(result) => CancellableFuture.successful(result)
+          case Failure(err)  => CancellableFuture.failed(DecodingError(err))
+        }
       }
-    }
 
   override def decodedResult[T: BodySerializer, R: BodyDeserializer](
       request: HttpRequest[T],
