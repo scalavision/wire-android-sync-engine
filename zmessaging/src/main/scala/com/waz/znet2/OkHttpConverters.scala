@@ -17,7 +17,7 @@
  */
 package com.waz.znet2
 
-import java.io.{File, InputStream}
+import java.io.InputStream
 
 import com.waz.ZLog.ImplicitTag._
 import com.waz.ZLog._
@@ -55,11 +55,11 @@ object OkHttpConverters {
     )
   }
 
-  def convertHttpRequest(request: HttpRequest[Http.Body], callback: Option[ProgressCallback], bufferSize: Int): OkRequest = {
+  def convertHttpRequest(request: Http.Request[Http.Body], callback: Option[ProgressCallback], bufferSize: Int): OkRequest = {
     createOkHttpRequest(request, createRequestBody(_, callback, bufferSize))
   }
 
-  private def createOkHttpRequest(request: HttpRequest[Http.Body], bodyConverter: Http.Body => OkRequestBody): OkRequest = {
+  private def createOkHttpRequest(request: Http.Request[Http.Body], bodyConverter: Http.Body => OkRequestBody): OkRequest = {
     new OkRequest.Builder()
       .url(request.url)
       .method(convertHttpMethod(request.httpMethod), request.body.map(bodyConverter).orNull)
@@ -69,8 +69,8 @@ object OkHttpConverters {
 
   def convertResponseCode(code: Int): Http.ResponseCode = Http.ResponseCode(code)
 
-  def convertOkHttpResponse(response: OkResponse): HttpResponse[Http.Body] = {
-    HttpResponse(
+  def convertOkHttpResponse(response: OkResponse): Http.Response[Http.Body] = {
+    Http.Response(
       code = convertResponseCode(response.code()),
       headers = Http.Headers.create(response.headers().toMultimap.asScala.mapValues(_.asScala.head).toMap),
       body = Option(response.body()).map(body =>

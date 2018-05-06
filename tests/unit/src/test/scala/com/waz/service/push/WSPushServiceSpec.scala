@@ -48,7 +48,7 @@ class WSPushServiceSpec extends ZMockSpec {
 
   private val accessTokenSuccess = Future.successful(Right(AccessToken("token", "type")))
   private val accessTokenError = Future.successful(Left(ErrorResponse.InternalError))
-  private val httpRequest = HttpRequest.create[Http.Body](new URL("http://www.test.com"))
+  private val httpRequest = Http.Request.create[Http.Body](new URL("http://www.test.com"))
 
   private val fakeWebSocketEvents: SourceStream[SocketEvent] = EventStream()
 
@@ -64,7 +64,7 @@ class WSPushServiceSpec extends ZMockSpec {
 
     scenario("On activation should get access token and become connected. On deactivation become disconnected immediately.") {
       (accessTokenProvider.currentToken _).expects().once().returning(accessTokenSuccess)
-      (webSocketFactory.openWebSocket(_: HttpRequest[Http.Body])(_: EventContext))
+      (webSocketFactory.openWebSocket(_: Http.Request[Http.Body])(_: EventContext))
         .expects(httpRequest, *).once().returning(fakeWebSocketEvents)
 
       val service = createWSPushService()
@@ -82,7 +82,7 @@ class WSPushServiceSpec extends ZMockSpec {
     scenario("When can not get an access token should retry to connect.") {
       val accessTokenResults = List(accessTokenError, accessTokenSuccess).toIterator
       (accessTokenProvider.currentToken _).expects().twice().onCall(() => accessTokenResults.next())
-      (webSocketFactory.openWebSocket(_: HttpRequest[Http.Body])(_: EventContext))
+      (webSocketFactory.openWebSocket(_: Http.Request[Http.Body])(_: EventContext))
         .expects(httpRequest, *).once().returning(fakeWebSocketEvents)
 
       val service = createWSPushService()
@@ -96,7 +96,7 @@ class WSPushServiceSpec extends ZMockSpec {
 
     scenario("When web socket closed should become unconnected and retry to connect.") {
       (accessTokenProvider.currentToken _).expects().twice().returning(accessTokenSuccess)
-      (webSocketFactory.openWebSocket(_: HttpRequest[Http.Body])(_: EventContext))
+      (webSocketFactory.openWebSocket(_: Http.Request[Http.Body])(_: EventContext))
         .expects(httpRequest, *).twice().returning(fakeWebSocketEvents)
 
       val service = createWSPushService()
@@ -118,7 +118,7 @@ class WSPushServiceSpec extends ZMockSpec {
 
     scenario("When web socket is going to be closed by other side should close web socket with normal closure code.") {
       (accessTokenProvider.currentToken _).expects().once().returning(accessTokenSuccess)
-      (webSocketFactory.openWebSocket(_: HttpRequest[Http.Body])(_: EventContext))
+      (webSocketFactory.openWebSocket(_: Http.Request[Http.Body])(_: EventContext))
         .expects(httpRequest, *).once().returning(fakeWebSocketEvents)
 
       val service = createWSPushService()
@@ -137,7 +137,7 @@ class WSPushServiceSpec extends ZMockSpec {
 
     scenario("When web socket emmit message of push notifications, should push it to notifications stream and stay connected.") {
       (accessTokenProvider.currentToken _).expects().once().returning(accessTokenSuccess)
-      (webSocketFactory.openWebSocket(_: HttpRequest[Http.Body])(_: EventContext))
+      (webSocketFactory.openWebSocket(_: Http.Request[Http.Body])(_: EventContext))
         .expects(httpRequest, *).once().returning(fakeWebSocketEvents)
 
       val service = createWSPushService()
@@ -164,7 +164,7 @@ class WSPushServiceSpec extends ZMockSpec {
 
     scenario("When web socket emmit message of push notifications, should push ignore it and stay connected.") {
       (accessTokenProvider.currentToken _).expects().once().returning(accessTokenSuccess)
-      (webSocketFactory.openWebSocket(_: HttpRequest[Http.Body])(_: EventContext))
+      (webSocketFactory.openWebSocket(_: Http.Request[Http.Body])(_: EventContext))
         .expects(httpRequest, *).once().returning(fakeWebSocketEvents)
 
       val service = createWSPushService()

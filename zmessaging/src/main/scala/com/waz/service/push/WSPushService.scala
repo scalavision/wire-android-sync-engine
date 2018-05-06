@@ -38,7 +38,7 @@ import com.waz.znet.AuthenticationManager.AccessToken
 import com.waz.znet2.Http
 import com.waz.znet2.Http.Headers
 import com.waz.znet2.WebSocketFactory.SocketEvent
-import com.waz.znet2.{HttpRequest, WebSocketFactory}
+import com.waz.znet2.WebSocketFactory
 
 import scala.concurrent.duration._
 import scala.util.Left
@@ -52,7 +52,7 @@ trait WSPushService {
 
 object WSPushServiceImpl {
 
-  type RequestCreator = AccessToken => HttpRequest[Http.Body]
+  type RequestCreator = AccessToken => Http.Request[Http.Body]
 
   def apply(userId: UserId,
             clientId: ClientId,
@@ -68,7 +68,7 @@ object WSPushServiceImpl {
         AsyncClient.UserAgentHeader -> AsyncClient.userAgent()
       )
 
-      HttpRequest.create[Http.Body](
+      Http.Request.create[Http.Body](
         method = Http.Method.Get,
         url = new URL(uri.toString),
         headers = Headers.create(headers)

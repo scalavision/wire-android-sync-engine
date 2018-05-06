@@ -32,14 +32,13 @@ object Http {
 
   sealed trait Method
   object Method {
-    case object Get extends Method
-    case object Post extends Method
-    case object Put extends Method
+    case object Get    extends Method
+    case object Post   extends Method
+    case object Put    extends Method
     case object Delete extends Method
-    case object Patch extends Method
-    case object Head extends Method
+    case object Patch  extends Method
+    case object Head   extends Method
   }
-
 
   case class ResponseCode(value: Int) extends AnyVal {
     import ResponseCode._
@@ -47,24 +46,24 @@ object Http {
   }
 
   object ResponseCode {
-    val Success               = 200
-    val Created               = 201
-    val NoResponse            = 204
-    val MovedPermanently      = 301
-    val MovedTemporarily      = 302
-    val SeeOther              = 303
-    val BadRequest            = 400
-    val Unauthorized          = 401
-    val Forbidden             = 403
-    val NotFound              = 404
-    val RateLimiting          = 420
-    val LoginRateLimiting     = 429
-    val Conflict              = 409
-    val PreconditionFailed    = 412
-    val InternalServerError   = 500
+    val Success             = 200
+    val Created             = 201
+    val NoResponse          = 204
+    val MovedPermanently    = 301
+    val MovedTemporarily    = 302
+    val SeeOther            = 303
+    val BadRequest          = 400
+    val Unauthorized        = 401
+    val Forbidden           = 403
+    val NotFound            = 404
+    val RateLimiting        = 420
+    val LoginRateLimiting   = 429
+    val Conflict            = 409
+    val PreconditionFailed  = 412
+    val InternalServerError = 500
   }
 
-  case class Headers(headers: Map[String, String] = Map.empty[String, String]){
+  case class Headers(headers: Map[String, String] = Map.empty[String, String]) {
     assert(!headers.keys.exists(key => Headers.toLower(key) != key)) //TODO Do we care?
 
     def get(key: String): Option[String] = headers.get(Headers.toLower(key))
@@ -78,7 +77,8 @@ object Http {
     val empty = Headers()
 
     def create(entries: (String, String)*): Headers = create(entries.toMap)
-    def create(headers: Map[String, String]): Headers = Headers(headers.map { case (key, value) => toLower(key) -> value })
+    def create(headers: Map[String, String]): Headers =
+      Headers(headers.map { case (key, value) => toLower(key) -> value })
 
     private def toLower(key: String) = key.toLowerCase(Locale.US) //TODO Do we need this?
   }
@@ -87,47 +87,41 @@ object Http {
 
   sealed trait EmptyBody
 
-}
+  object Request {
 
-object HttpRequest {
+    def create[T](
+        url: URL,
+        queryParameters: List[(String, String)] = List.empty,
+        method: Http.Method = Http.Method.Get,
+        headers: Http.Headers = Http.Headers.empty,
+        body: Option[T] = None
+    ): Request[T] = {
+      //TODO Refactor this conversions
+      val urlWithParameters = new URL(
+        queryParameters
+          .foldLeft(URI.parse(url.toString).buildUpon) {
+            case (builder, (key, value)) =>
+              builder.appendQueryParameter(key, value)
+          }
+          .build
+          .toString
+      )
+      new Request(urlWithParameters, method, headers, body)
+    }
 
-  def map[A,B](a: HttpRequest[A])(f: A => B): HttpRequest[B] = a.copy(body = a.body.map(f))
+    def withoutBody(
+        url: URL,
+        queryParameters: List[(String, String)] = List.empty,
+        method: Method = Method.Get,
+        headers: Headers = Headers.empty
+    ): Request[EmptyBody] = create(url, queryParameters, method, headers)
 
-  def lift[A,B](f: A => B): HttpRequest[A] => HttpRequest[B] = map(_)(f)
-
-  def create[T](url: URL,
-                queryParameters: List[(String, String)] = List.empty,
-                method: Http.Method = Http.Method.Get,
-                headers: Http.Headers = Http.Headers.empty,
-                body: Option[T] = None): HttpRequest[T] = {
-    //TODO Refactor this conversions
-    val urlWithParameters = new URL(queryParameters.foldLeft(URI.parse(url.toString).buildUpon){ case (builder, (key, value)) =>
-      builder.appendQueryParameter(key, value)
-    }.build.toString)
-    new HttpRequest(urlWithParameters, method, headers, body)
   }
 
-  def withoutBody(url: URL,
-                  queryParameters: List[(String, String)] = List.empty,
-                  method: Http.Method = Http.Method.Get,
-                  headers: Http.Headers = Http.Headers.empty): HttpRequest[Http.EmptyBody] = {
-    create(url, queryParameters, method, headers)
-  }
+  //TODO Body should not be optional
+  case class Request[T](url: URL, httpMethod: Method, headers: Headers, body: Option[T])
 
-}
+  //TODO Body should not be optional
+  case class Response[T](code: ResponseCode, headers: Headers, body: Option[T])
 
-case class HttpRequest[T](url: URL, httpMethod: Http.Method, headers: Http.Headers, body: Option[T]) {
-  def map[B](f: T => B): HttpRequest[B] = HttpRequest.map(this)(f)
-}
-
-object HttpResponse {
-
-  def map[A,B](a: HttpResponse[A])(f: A => B): HttpResponse[B] = a.copy(body = a.body.map(f))
-
-  def lift[A,B](f: A => B): HttpResponse[A] => HttpResponse[B] = map(_)(f)
-
-}
-
-case class HttpResponse[T](code: Http.ResponseCode, headers: Http.Headers, body: Option[T]) {
-  def map[B](f: T => B): HttpResponse[B] = HttpResponse.map(this)(f)
 }
