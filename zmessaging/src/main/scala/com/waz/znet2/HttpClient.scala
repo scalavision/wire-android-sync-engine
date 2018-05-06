@@ -76,7 +76,7 @@ object HttpClient {
       override def serialize(body: T): Body = f(body)
     }
 
-    def contramap[A, B](f: A => B)(implicit bs: BodySerializer[B]): BodySerializer[A] =
+    def contramap[A, B](bs: BodySerializer[A])(f: B => A): BodySerializer[B] =
       apply(f andThen bs.serialize)
 
     implicit val BytesBodySerializer: BodySerializer[Array[Byte]] =
@@ -89,7 +89,7 @@ object HttpClient {
       apply(file => Body(None, new FileInputStream(file), Some(file.length())))
 
     implicit def objectToJsonBodySerializer[T](implicit e: JsonEncoder[T]): BodySerializer[T] =
-      contramap(e.apply)
+      contramap(JsonBodySerializer)(e.apply)
 
   }
 
@@ -138,8 +138,7 @@ object HttpClient {
           f(body, callback, parameters)
       }
 
-    //TODO Not contramap, find proper name
-    def contramap[A, B](f: B => A)(implicit bd: BodyDeserializer[B]): BodyDeserializer[A] =
+    def map[A, B](bd: BodyDeserializer[A])(f: A => B): BodyDeserializer[B] =
       apply((body, callback, params) => f(bd.deserialize(body, callback, params)))
 
     implicit val BytesBodyDeserializer: BodyDeserializer[Array[Byte]] =
@@ -167,7 +166,7 @@ object HttpClient {
       apply((body, _, _) => new JSONObject(new String(IoUtils.toByteArray(body.data))))
 
     implicit def objectToJsonBodyDeserializer[T](implicit d: JsonDecoder[T]): BodyDeserializer[T] =
-      contramap((json: JSONObject) => d(json))
+      map(JsonBodyDeserializer)(json => d(json))
 
   }
 
