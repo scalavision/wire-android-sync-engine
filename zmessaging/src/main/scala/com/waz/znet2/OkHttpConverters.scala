@@ -19,12 +19,11 @@ package com.waz.znet2
 
 import java.io.InputStream
 
-import com.waz.ZLog.ImplicitTag._
-import com.waz.ZLog._
+import com.waz.utils.IoUtils
 import com.waz.znet2.Http.Method._
 import com.waz.znet2.HttpClient.{Progress, ProgressCallback}
 import okhttp3.{Headers => OkHeaders, MediaType => OkMediaType, Request => OkRequest, RequestBody => OkRequestBody, Response => OkResponse, WebSocket => OkWebSocket}
-import okio.{Buffer, BufferedSink, Okio, Source}
+import okio.BufferedSink
 
 import scala.collection.JavaConverters._
 
@@ -69,17 +68,19 @@ object OkHttpConverters {
 
   def convertResponseCode(code: Int): Http.ResponseCode = Http.ResponseCode(code)
 
-  def convertOkHttpResponse(response: OkResponse): Http.Response[Http.Body] = {
+  def convertOkHttpResponse(response: OkResponse, callback: Option[ProgressCallback]): Http.Response[Http.Body] = {
     Http.Response(
       code = convertResponseCode(response.code()),
       headers = Http.Headers.create(response.headers().toMultimap.asScala.mapValues(_.asScala.head).toMap),
-      body = Option(response.body()).map(body =>
+      body = Option(response.body()).map { body =>
+        val data = body.byteStream()
+        val dataLength = if (body.contentLength() == -1) None else Some(body.contentLength())
         Http.Body(
           mediaType = Option(body.contentType()).map(_.toString),
-          data = body.byteStream(),
-          dataLength = if (body.contentLength() == -1) None else Some(body.contentLength())
+          data = callback.map(createProgressInputStream(_, data, dataLength)).getOrElse(data),
+          dataLength = dataLength
         )
-      )
+      }
     )
   }
 
@@ -91,23 +92,18 @@ object OkHttpConverters {
     override val contentType: OkMediaType = mediaType.orNull
     override val contentLength: Long = dataLength.getOrElse(-1)
 
-    def writeTo(sink: BufferedSink): Unit = {
-      var source: Source = null
-      try {
-        source = Okio.source(data)
-        val buf = new Buffer()
-        var totalRead = 0L
-        var readCount = 0L
-        callback.foreach(c => c(Progress(0, dataLength)))
-        while ({ readCount = source.read(buf, bufferSize); readCount != -1}) {
-          totalRead += readCount
-          sink.write(buf: Source, readCount)
-          callback.foreach(c => c(Progress(totalRead, dataLength)))
-        }
-      } catch {
-        case e: Exception => error("error while writing to sink", e)
+    def writeTo(sink: BufferedSink): Unit = IoUtils.copy(
+      in = callback.map(createProgressInputStream(_, data, dataLength)).getOrElse(data),
+      out = sink.outputStream()
+    )
+  }
+
+  private def createProgressInputStream(callback: ProgressCallback, data: InputStream, dataLength: Option[Long]): ProgressInputStream = {
+    new ProgressInputStream(data, new ProgressInputStream.Listener {
+      override def progressUpdated(bytesRead: Long): Unit = {
+        callback(Progress(bytesRead, dataLength))
       }
-    }
+    })
   }
 
 }

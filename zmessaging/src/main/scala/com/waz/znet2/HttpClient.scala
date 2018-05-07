@@ -94,76 +94,50 @@ object HttpClient {
   }
 
   trait ResponseDeserializer[T] {
-    def deserialize(
-        response: Response[Body],
-        callback: Option[ProgressCallback],
-        parameters: ResponseDeserializer.Parameters
-    ): Response[T]
+    def deserialize(response: Response[Body], parameters: ResponseDeserializer.Parameters): Response[T]
   }
 
   object ResponseDeserializer {
 
     case class Parameters(tmpFileGenerator: () => File)
 
-    def apply[T](f: (Response[Body], Option[ProgressCallback], Parameters) => Response[T]): ResponseDeserializer[T] =
-      new ResponseDeserializer[T] {
-        override def deserialize(
-          response: Response[Body],
-          callback: Option[ProgressCallback],
-          parameters: Parameters
-      ): Response[T] = f(response, callback, parameters)
+    def apply[T](f: (Response[Body], Parameters) => Response[T]): ResponseDeserializer[T] = new ResponseDeserializer[T] {
+      override def deserialize(response: Response[Body], parameters: Parameters): Response[T] = f(response, parameters)
     }
 
     implicit val EmptyResponseBodyDeserializer: ResponseDeserializer[EmptyBody] =
-      apply((response, _, _) => response.copy(body = None))
+      apply((response, _) => response.copy(body = None))
 
     implicit def deserializerFromBodyDeserializer[T](implicit bd: BodyDeserializer[T]): ResponseDeserializer[T] =
-      apply((response, callback, params) => response.copy(body = response.body.map(bd.deserialize(_, callback, params))))
+      apply((response, params) => response.copy(body = response.body.map(bd.deserialize(_, params))))
   }
 
   trait BodyDeserializer[T] {
-    def deserialize(
-        body: Body,
-        callback: Option[ProgressCallback],
-        parameters: ResponseDeserializer.Parameters
-    ): T
+    def deserialize(body: Body, parameters: ResponseDeserializer.Parameters): T
   }
 
   object BodyDeserializer {
     import ResponseDeserializer.Parameters
 
-    def apply[T](f: (Body, Option[ProgressCallback], Parameters) => T): BodyDeserializer[T] =
-      new BodyDeserializer[T] {
-        override def deserialize(body: Body, callback: Option[ProgressCallback], parameters: Parameters): T =
-          f(body, callback, parameters)
-      }
+    def apply[T](f: (Body, Parameters) => T): BodyDeserializer[T] = new BodyDeserializer[T] {
+      override def deserialize(body: Body, parameters: Parameters): T = f(body, parameters)
+    }
 
     def map[A, B](bd: BodyDeserializer[A])(f: A => B): BodyDeserializer[B] =
-      apply((body, callback, params) => f(bd.deserialize(body, callback, params)))
+      apply((body, params) => f(bd.deserialize(body, params)))
 
     implicit val BytesBodyDeserializer: BodyDeserializer[Array[Byte]] =
-      apply((body, callback, _) => IoUtils.toByteArray(body.data))
+      apply((body, _) => IoUtils.toByteArray(body.data))
 
     implicit val FileBodyDeserializer: BodyDeserializer[File] =
-      apply { (body, callback, params) =>
+      apply { (body, params) =>
         val file = params.tmpFileGenerator()
-        IoUtils.withResource(new FileOutputStream(file)) { out =>
-          val buf       = Array.fill[Byte](2048)(0)
-          var totalRead = 0L
-          var readCount = 0
-          callback.foreach(c => c(Progress(0, body.dataLength)))
-          while ({ readCount = body.data.read(buf); readCount != -1 }) {
-            totalRead += readCount
-            out.write(buf, 0, readCount)
-            callback.foreach(c => c(Progress(totalRead, body.dataLength)))
-          }
-        }
-
+        IoUtils.copy(body.data, new FileOutputStream(file))
         file
     }
 
     implicit val JsonBodyDeserializer: BodyDeserializer[JSONObject] =
-      apply((body, _, _) => new JSONObject(new String(IoUtils.toByteArray(body.data))))
+      apply((body, _) => new JSONObject(new String(IoUtils.toByteArray(body.data))))
 
     implicit def objectToJsonBodyDeserializer[T](implicit d: JsonDecoder[T]): BodyDeserializer[T] =
       map(JsonBodyDeserializer)(json => d(json))
@@ -213,7 +187,7 @@ class HttpClientOkHttpImpl() extends HttpClient {
           private val okCall = client.newCall(convertHttpRequest(serializedRequest, uploadCallback, BufferSize))
           okCall.enqueue(new Callback {
             override def onResponse(call: Call, response: okhttp3.Response): Unit =
-              promise.trySuccess(convertOkHttpResponse(response))
+              promise.trySuccess(convertOkHttpResponse(response, downloadCallback))
             override def onFailure(call: Call, e: IOException): Unit =
               promise.tryFailure(ConnectionError(e))
           })
@@ -225,7 +199,7 @@ class HttpClientOkHttpImpl() extends HttpClient {
         }
       }
       .flatMap { response =>
-        Try(bd.deserialize(response, downloadCallback, deserializingParameters)) match {
+        Try(bd.deserialize(response, deserializingParameters)) match {
           case Success(result) => CancellableFuture.successful(result)
           case Failure(err)    => CancellableFuture.failed(DecodingError(err))
         }

@@ -149,8 +149,7 @@ class HttpClientSpec extends ZSpec {
 
     checkProgressSequence(
       progressAcc.toList,
-      contentLength = testRequestBody.length,
-      stepLength = HttpClient.BufferSize
+      contentLength = testRequestBody.length
     )
   }
 
@@ -172,16 +171,14 @@ class HttpClientSpec extends ZSpec {
 
     checkProgressSequence(
       progressAcc.toList,
-      contentLength = testResponseBody.length,
-      stepLength = HttpClient.BufferSize
+      contentLength = testResponseBody.length
     )
   }
 
-  def checkProgressSequence(list: List[Progress], contentLength: Long, stepLength: Long): Unit =
+  def checkProgressSequence(list: List[Progress], contentLength: Long): Unit =
     withClue(s"Progress sequence: $list") {
       list.head.progress shouldBe 0
       list.last.isCompleted shouldBe true
-      list.size shouldBe Math.ceil(contentLength.toDouble / stepLength).toInt + 1
       list foreach { p => p.progress should be <= p.total.getOrElse(0L) }
       list zip list.tail foreach { case (prev, curr) => prev.progress should be < curr.progress }
     }
