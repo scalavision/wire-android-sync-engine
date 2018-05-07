@@ -44,7 +44,7 @@ object OkHttpConverters {
     OkMediaType.parse(mediatype)
   }
 
-  private def createRequestBody(body: Http.Body, callback: Option[ProgressCallback], bufferSize: Int): OkRequestBody = {
+  private def createRequestBody(body: Http.RawBody, callback: Option[ProgressCallback], bufferSize: Int): OkRequestBody = {
     createCustomRequestBody(
       callback,
       body.mediaType.map(convertMediaType),
@@ -54,11 +54,11 @@ object OkHttpConverters {
     )
   }
 
-  def convertHttpRequest(request: Http.Request[Http.Body], callback: Option[ProgressCallback], bufferSize: Int): OkRequest = {
+  def convertHttpRequest(request: Http.Request[Http.RawBody], callback: Option[ProgressCallback], bufferSize: Int): OkRequest = {
     createOkHttpRequest(request, createRequestBody(_, callback, bufferSize))
   }
 
-  private def createOkHttpRequest(request: Http.Request[Http.Body], bodyConverter: Http.Body => OkRequestBody): OkRequest = {
+  private def createOkHttpRequest(request: Http.Request[Http.RawBody], bodyConverter: Http.RawBody => OkRequestBody): OkRequest = {
     new OkRequest.Builder()
       .url(request.url)
       .method(convertHttpMethod(request.httpMethod), request.body.map(bodyConverter).orNull)
@@ -68,14 +68,14 @@ object OkHttpConverters {
 
   def convertResponseCode(code: Int): Http.ResponseCode = Http.ResponseCode(code)
 
-  def convertOkHttpResponse(response: OkResponse, callback: Option[ProgressCallback]): Http.Response[Http.Body] = {
+  def convertOkHttpResponse(response: OkResponse, callback: Option[ProgressCallback]): Http.Response[Http.RawBody] = {
     Http.Response(
       code = convertResponseCode(response.code()),
       headers = Http.Headers.create(response.headers().toMultimap.asScala.mapValues(_.asScala.head).toMap),
       body = Option(response.body()).map { body =>
         val data = body.byteStream()
         val dataLength = if (body.contentLength() == -1) None else Some(body.contentLength())
-        Http.Body(
+        Http.RawBody(
           mediaType = Option(body.contentType()).map(_.toString),
           data = callback.map(createProgressInputStream(_, data, dataLength)).getOrElse(data),
           dataLength = dataLength

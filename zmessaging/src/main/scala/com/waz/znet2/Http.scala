@@ -83,7 +83,7 @@ object Http {
     private def toLower(key: String) = key.toLowerCase(Locale.US) //TODO Do we need this?
   }
 
-  case class Body(mediaType: Option[String], data: InputStream, dataLength: Option[Long] = None)
+  case class RawBody(mediaType: Option[String], data: InputStream, dataLength: Option[Long] = None)
 
   sealed trait EmptyBody
 

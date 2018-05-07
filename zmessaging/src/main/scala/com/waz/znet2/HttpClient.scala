@@ -21,15 +21,15 @@ import java.io._
 
 import com.waz.ZLog.ImplicitTag._
 import com.waz.ZLog.LogTag
-import com.waz.threading.{CancellableFuture, SerialDispatchQueue, Threading}
-import com.waz.utils.{IoUtils, JsonDecoder, JsonEncoder}
+import com.waz.threading.{ CancellableFuture, SerialDispatchQueue, Threading }
+import com.waz.utils.{ IoUtils, JsonDecoder, JsonEncoder }
 import com.waz.znet2.Http._
 import com.waz.znet2.HttpClient._
-import okhttp3.{Call, Callback, OkHttpClient}
+import okhttp3.{ Call, Callback, OkHttpClient }
 import org.json.JSONObject
 
 import scala.concurrent.Promise
-import scala.util.{Failure, Success, Try}
+import scala.util.{ Failure, Success, Try }
 
 object HttpClient {
 
@@ -41,21 +41,21 @@ object HttpClient {
     val isCompleted: Boolean = total.forall(_ == progress)
   }
 
-  sealed trait HttpClientError                                       extends Throwable
+  sealed trait HttpClientError                                   extends Throwable
   case class UnsuccessfulResponseError[T](response: Response[T]) extends HttpClientError
-  case class ConnectionError(err: Throwable)                         extends HttpClientError
-  case class EncodingError(err: Throwable)                           extends HttpClientError
-  case class DecodingError(err: Throwable)                           extends HttpClientError
+  case class ConnectionError(err: Throwable)                     extends HttpClientError
+  case class EncodingError(err: Throwable)                       extends HttpClientError
+  case class DecodingError(err: Throwable)                       extends HttpClientError
   case class EmptyBodyError[T](response: Response[T])            extends HttpClientError
 
   trait RequestSerializer[T] {
-    def serialize(request: Request[T]): Request[Body]
+    def serialize(request: Request[T]): Request[RawBody]
   }
 
   object RequestSerializer {
 
-    def apply[T](f: Request[T] => Request[Body]): RequestSerializer[T] = new RequestSerializer[T] {
-      override def serialize(request: Request[T]): Request[Body] = f(request)
+    def apply[T](f: Request[T] => Request[RawBody]): RequestSerializer[T] = new RequestSerializer[T] {
+      override def serialize(request: Request[T]): Request[RawBody] = f(request)
     }
 
     implicit val EmptyBodyRequestSerializer: RequestSerializer[EmptyBody] =
@@ -67,26 +67,26 @@ object HttpClient {
   }
 
   trait BodySerializer[T] {
-    def serialize(body: T): Body
+    def serialize(body: T): RawBody
   }
 
   object BodySerializer {
 
-    def apply[T](f: T => Body): BodySerializer[T] = new BodySerializer[T] {
-      override def serialize(body: T): Body = f(body)
+    def apply[T](f: T => RawBody): BodySerializer[T] = new BodySerializer[T] {
+      override def serialize(body: T): RawBody = f(body)
     }
 
     def contramap[A, B](bs: BodySerializer[A])(f: B => A): BodySerializer[B] =
       apply(f andThen bs.serialize)
 
     implicit val BytesBodySerializer: BodySerializer[Array[Byte]] =
-      apply(bytes => Body(Some(MediaType.Bytes), new ByteArrayInputStream(bytes), Some(bytes.length)))
+      apply(bytes => RawBody(Some(MediaType.Bytes), new ByteArrayInputStream(bytes), Some(bytes.length)))
 
     implicit val JsonBodySerializer: BodySerializer[JSONObject] =
       apply(json => BytesBodySerializer.serialize(json.toString.getBytes("utf8")))
 
     implicit val FileBodySerializer: BodySerializer[File] =
-      apply(file => Body(None, new FileInputStream(file), Some(file.length())))
+      apply(file => RawBody(None, new FileInputStream(file), Some(file.length())))
 
     implicit def objectToJsonBodySerializer[T](implicit e: JsonEncoder[T]): BodySerializer[T] =
       contramap(JsonBodySerializer)(e.apply)
@@ -94,16 +94,18 @@ object HttpClient {
   }
 
   trait ResponseDeserializer[T] {
-    def deserialize(response: Response[Body], parameters: ResponseDeserializer.Parameters): Response[T]
+    def deserialize(response: Response[RawBody], parameters: ResponseDeserializer.Parameters): Response[T]
   }
 
   object ResponseDeserializer {
 
     case class Parameters(tmpFileGenerator: () => File)
 
-    def apply[T](f: (Response[Body], Parameters) => Response[T]): ResponseDeserializer[T] = new ResponseDeserializer[T] {
-      override def deserialize(response: Response[Body], parameters: Parameters): Response[T] = f(response, parameters)
-    }
+    def apply[T](f: (Response[RawBody], Parameters) => Response[T]): ResponseDeserializer[T] =
+      new ResponseDeserializer[T] {
+        override def deserialize(response: Response[RawBody], parameters: Parameters): Response[T] =
+          f(response, parameters)
+      }
 
     implicit val EmptyResponseBodyDeserializer: ResponseDeserializer[EmptyBody] =
       apply((response, _) => response.copy(body = None))
@@ -113,18 +115,20 @@ object HttpClient {
   }
 
   trait BodyDeserializer[T] {
-    def deserialize(body: Body, parameters: ResponseDeserializer.Parameters): T
+    def deserialize(body: RawBody, parameters: ResponseDeserializer.Parameters): T
   }
 
   object BodyDeserializer {
     import ResponseDeserializer.Parameters
 
-    def apply[T](f: (Body, Parameters) => T): BodyDeserializer[T] = new BodyDeserializer[T] {
-      override def deserialize(body: Body, parameters: Parameters): T = f(body, parameters)
+    def apply[T](f: (RawBody, Parameters) => T): BodyDeserializer[T] = new BodyDeserializer[T] {
+      override def deserialize(body: RawBody, parameters: Parameters): T = f(body, parameters)
     }
 
     def map[A, B](bd: BodyDeserializer[A])(f: A => B): BodyDeserializer[B] =
       apply((body, params) => f(bd.deserialize(body, params)))
+
+    implicit val RawBodyDeserializer: BodyDeserializer[RawBody] = apply((body, _) => body)
 
     implicit val BytesBodyDeserializer: BodyDeserializer[Array[Byte]] =
       apply((body, _) => IoUtils.toByteArray(body.data))
@@ -134,7 +138,7 @@ object HttpClient {
         val file = params.tmpFileGenerator()
         IoUtils.copy(body.data, new FileOutputStream(file))
         file
-    }
+      }
 
     implicit val JsonBodyDeserializer: BodyDeserializer[JSONObject] =
       apply((body, _) => new JSONObject(new String(IoUtils.toByteArray(body.data))))
@@ -160,6 +164,12 @@ trait HttpClient {
       downloadCallback: Option[ProgressCallback] = None
   ): CancellableFuture[R]
 
+  def decodedResultAndError[T: RequestSerializer, E: ResponseDeserializer, R: ResponseDeserializer](
+      request: Request[T],
+      uploadCallback: Option[ProgressCallback] = None,
+      downloadCallback: Option[ProgressCallback] = None
+  ): CancellableFuture[Either[E, R]]
+
 }
 
 class HttpClientOkHttpImpl() extends HttpClient {
@@ -174,47 +184,75 @@ class HttpClientOkHttpImpl() extends HttpClient {
       () => new File(s"${System.getProperty("java.io.tmpdir")}/http_client_tmp_${System.currentTimeMillis()}")
   )
 
+  private def execute(
+                       request: Request[RawBody],
+                       uploadCallback: Option[ProgressCallback] = None,
+                       downloadCallback: Option[ProgressCallback] = None
+  ): CancellableFuture[Response[RawBody]] =
+    CancellableFuture(()).flatMap { _ =>
+      val promise = Promise[Response[RawBody]]
+      new CancellableFuture(promise) {
+        private val okCall = client.newCall(convertHttpRequest(request, uploadCallback, BufferSize))
+        okCall.enqueue(new Callback {
+          override def onResponse(call: Call, response: okhttp3.Response): Unit =
+            promise.trySuccess(convertOkHttpResponse(response, downloadCallback))
+          override def onFailure(call: Call, e: IOException): Unit =
+            promise.tryFailure(ConnectionError(e))
+        })
+
+        override def cancel()(implicit tag: LogTag): Boolean = {
+          okCall.cancel()
+          super.cancel()(tag)
+        }
+      }
+    }
+
+  private def serializeRequest[T](
+      request: Request[T]
+  )(implicit rs: RequestSerializer[T]): CancellableFuture[Request[RawBody]] =
+    CancellableFuture(rs.serialize(request))
+      .recoverWith { case err: Throwable => CancellableFuture.failed(EncodingError(err)) }
+
+  private def deserializeResponse[T](
+      response: Response[RawBody]
+  )(implicit rd: ResponseDeserializer[T]): CancellableFuture[Response[T]] =
+    CancellableFuture(Try(rd.deserialize(response, deserializingParameters))).flatMap {
+      case Success(result) => CancellableFuture.successful(result)
+      case Failure(err)    => CancellableFuture.failed(DecodingError(err))
+    }
+
   override def call[T, R](
       request: Request[T],
       uploadCallback: Option[ProgressCallback] = None,
       downloadCallback: Option[ProgressCallback] = None
   )(implicit bs: RequestSerializer[T], bd: ResponseDeserializer[R]): CancellableFuture[Response[R]] =
-    CancellableFuture(bs.serialize(request))
-      .recoverWith { case err: Throwable => CancellableFuture.failed(EncodingError(err)) }
-      .flatMap { serializedRequest =>
-        val promise = Promise[Response[Body]]
-        new CancellableFuture(promise) {
-          private val okCall = client.newCall(convertHttpRequest(serializedRequest, uploadCallback, BufferSize))
-          okCall.enqueue(new Callback {
-            override def onResponse(call: Call, response: okhttp3.Response): Unit =
-              promise.trySuccess(convertOkHttpResponse(response, downloadCallback))
-            override def onFailure(call: Call, e: IOException): Unit =
-              promise.tryFailure(ConnectionError(e))
-          })
-
-          override def cancel()(implicit tag: LogTag): Boolean = {
-            okCall.cancel()
-            super.cancel()(tag)
-          }
-        }
-      }
-      .flatMap { response =>
-        Try(bd.deserialize(response, deserializingParameters)) match {
-          case Success(result) => CancellableFuture.successful(result)
-          case Failure(err)    => CancellableFuture.failed(DecodingError(err))
-        }
-      }
+    serializeRequest(request)
+      .flatMap(serializedResponse => execute(serializedResponse, uploadCallback, downloadCallback))
+      .flatMap(response => deserializeResponse(response))
 
   override def decodedResult[T: RequestSerializer, R: ResponseDeserializer](
       request: Request[T],
       uploadCallback: Option[ProgressCallback] = None,
       downloadCallback: Option[ProgressCallback] = None
-  ): CancellableFuture[R] = call[T, R](request, uploadCallback, downloadCallback).flatMap { response =>
-    if (!response.code.isSuccessful) CancellableFuture.failed(UnsuccessfulResponseError(response))
-    response.body match {
-      case None         => CancellableFuture.failed(EmptyBodyError(response))
-      case Some(result) => CancellableFuture.successful(result)
-    }
-  }
+  ): CancellableFuture[R] =
+    serializeRequest(request)
+      .flatMap(execute(_, uploadCallback, downloadCallback))
+      .flatMap { response =>
+        if (response.body.isEmpty) CancellableFuture.failed(EmptyBodyError(response))
+        else if (response.code.isSuccessful) deserializeResponse[R](response).map(_.body.get)
+        else CancellableFuture.failed(UnsuccessfulResponseError(response))
+      }
 
+  override def decodedResultAndError[T: RequestSerializer, E: ResponseDeserializer, R: ResponseDeserializer](
+      request: Request[T],
+      uploadCallback: Option[ProgressCallback],
+      downloadCallback: Option[ProgressCallback]
+  ): CancellableFuture[Either[E, R]] =
+    serializeRequest(request)
+      .flatMap(execute(_, uploadCallback, downloadCallback))
+      .flatMap { response =>
+        if (response.body.isEmpty) CancellableFuture.failed(EmptyBodyError(response))
+        else if (response.code.isSuccessful) deserializeResponse[R](response).map(r => Right(r.body.get))
+        else deserializeResponse[E](response).map(r => Left(r.body.get))
+      }
 }

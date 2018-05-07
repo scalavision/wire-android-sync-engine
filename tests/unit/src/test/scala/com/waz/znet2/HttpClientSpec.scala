@@ -31,6 +31,21 @@ import scala.collection.mutable.ArrayBuffer
 
 class HttpClientSpec extends ZSpec {
 
+  case class FooError(description: String)
+
+  implicit val fooErrorEncoder: JsonEncoder[FooError] = new JsonEncoder[FooError] {
+    override def apply(data: FooError): JSONObject = JsonEncoder { o =>
+      o.put("description", data.description)
+    }
+  }
+
+  implicit val fooErrorDecoder: JsonDecoder[FooError] = new JsonDecoder[FooError] {
+    import JsonDecoder._
+    override def apply(implicit js: JSONObject): FooError = {
+      FooError(decodeString('description))
+    }
+  }
+
   case class Foo(a: Int, b: String)
 
   implicit val fooEncoder: JsonEncoder[Foo] = new JsonEncoder[Foo] {
@@ -131,6 +146,52 @@ class HttpClientSpec extends ZSpec {
 
     responseFile.exists() shouldBe true
     scala.io.Source.fromFile(responseFile).mkString shouldBe testResponseBodyStr
+  }
+
+  scenario("return decoded response body [Right[_, Foo]] when response code is successful.") {
+    val testResponseCode = ResponseCode(201)
+    val testResponseObject = Foo(1, "ok")
+    val testResponseBodyStr = fooEncoder(testResponseObject).toString
+
+    mockServer.enqueue(
+      new MockResponse()
+        .setResponseCode(testResponseCode.value)
+        .setBody(testResponseBodyStr)
+    )
+
+    val client = new HttpClientOkHttpImpl()
+    val request = Request.withoutBody(mockServer.url("/test").url())
+
+    val responseObjectFuture = client.decodedResultAndError[EmptyBody, FooError, Foo](request)
+    var responseObject: Either[FooError, Foo] = null
+    noException shouldBe thrownBy {
+      responseObject = result { responseObjectFuture }
+    }
+
+    responseObject shouldBe Right(testResponseObject)
+  }
+
+  scenario("return decoded response body [Left[FooError, _]] when response code is successful.") {
+    val testResponseCode = ResponseCode(500)
+    val testResponseObject = FooError("test descr")
+    val testResponseBodyStr = fooErrorEncoder(testResponseObject).toString
+
+    mockServer.enqueue(
+      new MockResponse()
+        .setResponseCode(testResponseCode.value)
+        .setBody(testResponseBodyStr)
+    )
+
+    val client = new HttpClientOkHttpImpl()
+    val request = Request.withoutBody(mockServer.url("/test").url())
+
+    val responseObjectFuture = client.decodedResultAndError[EmptyBody, FooError, Foo](request)
+    var responseObject: Either[FooError, Foo] = null
+    noException shouldBe thrownBy {
+      responseObject = result { responseObjectFuture }
+    }
+
+    responseObject shouldBe Left(testResponseObject)
   }
 
   scenario("should execute upload request and call progress callback when server is responding.") {

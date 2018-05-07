@@ -35,7 +35,7 @@ class OkHttpWebSocketSpec extends WordSpec with MustMatchers with Inside with Be
 
   private val testPath = "/test"
   private val defaultWaiting = 100
-  private def testWebSocketRequest(url: String): Http.Request[Http.Body] = Http.Request.create(new URL(url))
+  private def testWebSocketRequest(url: String): Http.Request[Http.RawBody] = Http.Request.create(new URL(url))
 
   private var mockServer: DefaultMockServer = _
 
